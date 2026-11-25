@@ -1,0 +1,69 @@
+flowchart TD
+    U["Owner request<br/>(Streamlit 'Ask PawPal+' box or assistant_cli.py)"]
+
+    subgraph G1["guardrails.py: input check"]
+        IC{"check_input()"}
+    end
+    U --> IC
+    IC -- "empty / too long / prompt injection" --> R1["Polite refusal<br/>(model never called)"]
+    IC -- "emergency (poisoning, seizure, ...)" --> R2["Fixed vet + ASPCA Poison Control message<br/>(model never called)"]
+
+    subgraph A["agent.py: PawPalAgent tool-use loop (max 8 steps)"]
+        C["Claude (claude-opus-5-5)<br/>system prompt + adaptive thinking"]
+        D{"stop_reason"}
+        X["execute_tool()"]
+        C --> D
+        D -- "tool_use" --> X
+        X -- "tool_result (or is_error)" --> C
+    end
+    IC -- "ok" --> C
+
+    subgraph T["Tools"]
+        T1["list_pets / list_tasks"]
+        T2["search_care_guide"]
+        T3["add_task"]
+        T4["generate_plan"]
+    end
+    X --> T1 & T2 & T3 & T4
+
+    subgraph RAG["retriever.py: RAG"]
+        K[("knowledge/*.md<br/>5 care-guide docs")]
+        IDX["Section-level index<br/>+ species metadata"]
+        BM["BM25 search, top 3<br/>with citations"]
+        K --> IDX --> BM
+    end
+    T2 --> BM
+
+    V{"validate_task_args()<br/>+ duplicate check"}
+    T3 --> V
+    V -- "invalid: error sent back,<br/>Claude self-corrects" --> X
+
+    subgraph CORE["pawpal_system.py: original PawPal+ core"]
+        O["Owner / Pet / Task"]
+        S["Scheduler<br/>generate_plan, detect_conflicts, explain_plan"]
+    end
+    T1 --> O
+    V -- "valid" --> O
+    T4 --> S
+    S --> O
+
+    OFF["Offline mode: run_offline()<br/>(no / invalid API key)"]
+    C -.->|"MissingCredentialsError"| OFF
+    OFF -- "care question" --> BM
+    OFF -- "plan request" --> S
+
+    D -- "end_turn" --> OC{"check_output()<br/>dose? uncited advice?"}
+    OFF --> OC
+    OC --> ANS["Answer shown to owner<br/>+ new tasks appear in the UI"]
+    OC --> LOG[("logs/agent_traces.md<br/>reasoning, tool calls, results, flags")]
+
+    subgraph EV["Testing and evaluation"]
+        PT["pytest: 70 unit tests<br/>(fake Claude client)"]
+        RE["eval/run_eval.py<br/>offline + --live cases, pass/fail summary"]
+        CR["eval/compare_retrieval.py<br/>file-level vs section-level index"]
+    end
+    PT -.-> A
+    RE -.-> G1
+    RE -.-> RAG
+    RE -.-> A
+    CR -.-> RAG

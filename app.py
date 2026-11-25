@@ -6,37 +6,10 @@ st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
 
-st.markdown(
-    """
-Welcome to the PawPal+ starter app.
-
-This file is intentionally thin. It gives you a working Streamlit app so you can start quickly,
-but **it does not implement the project logic**. Your job is to design the system and build it.
-
-Use this app as your interactive demo once your backend classes/functions exist.
-"""
+st.caption(
+    "Plan your pets' care day: add pets and tasks, build a schedule that fits your time, "
+    "or ask the AI assistant to do it for you in plain language."
 )
-
-with st.expander("Scenario", expanded=True):
-    st.markdown(
-        """
-**PawPal+** is a pet care planning assistant. It helps a pet owner plan care tasks
-for their pet(s) based on constraints like time, priority, and preferences.
-
-You will design and implement the scheduling logic and connect it to this Streamlit UI.
-"""
-    )
-
-with st.expander("What you need to build", expanded=True):
-    st.markdown(
-        """
-At minimum, your system should:
-- Represent pet care tasks (what needs to happen, how long it takes, priority)
-- Represent the pet and the owner (basic info and preferences)
-- Build a plan/schedule for a day that chooses and orders tasks based on constraints
-- Explain the plan (why each task was chosen and when it happens)
-"""
-    )
 
 st.divider()
 
@@ -234,3 +207,76 @@ if st.button("Generate schedule"):
             )
         with st.expander("Why this plan?"):
             st.text(scheduler.explain_plan())
+
+st.divider()
+
+st.subheader("🤖 Ask PawPal+")
+st.caption(
+    "Ask a pet care question or describe tasks in plain language, e.g. "
+    "\"Mochi needs her pill at 8:00 every day, then plan my day.\" "
+    "The assistant can add tasks to your list above and answers care questions "
+    "from the PawPal+ care guide, with sources."
+)
+
+request = st.text_area("Your request", key="ai_request", height=80)
+if st.button("Ask"):
+    st.session_state.pop("ai_result", None)  # don't show a stale answer if this one fails
+    # Imported here so the rest of the app works even without the anthropic package.
+    try:
+        import anthropic
+
+        from agent import MissingCredentialsError, PawPalAgent
+    except ImportError:
+        st.error("Install the AI dependencies first: pip install -r requirements.txt")
+    else:
+        if not owner.pets:
+            st.info("Tip: add a pet first so the assistant has someone to plan for.")
+        with st.spinner("Thinking..."):
+            try:
+                result = PawPalAgent(owner).run(request)
+            except MissingCredentialsError as exc:
+                st.warning(
+                    f"{exc} Restart the app after changing it. "
+                    "Meanwhile, here is an offline answer from the care guide and scheduler (no AI)."
+                )
+                result = PawPalAgent(owner).run_offline(request)
+            except anthropic.APIConnectionError:
+                st.error("Couldn't reach the Anthropic API. Check your internet connection.")
+                result = None
+            except anthropic.APIStatusError as exc:
+                st.error(f"The AI service returned an error ({exc.status_code}). Please try again.")
+                result = None
+        if result is not None:
+            st.session_state.ai_result = result
+            if result.tasks_added:
+                # Rerun so the task tables above show the new tasks.
+                st.rerun()
+
+if "ai_result" in st.session_state:
+    result = st.session_state.ai_result
+    if result.blocked == "emergency":
+        st.error(result.answer)
+    elif result.blocked:
+        st.warning(result.answer)
+    elif result.answer.startswith("[offline mode]"):
+        st.text(result.answer)
+    else:
+        st.markdown(result.answer)
+    if result.tasks_added:
+        st.success("Added to your tasks: " + ", ".join(result.tasks_added))
+    if result.flags:
+        st.caption("Guardrail flags: " + ", ".join(result.flags))
+    with st.expander("How the assistant got this answer"):
+        for s in result.steps:
+            if s["kind"] == "input_guardrail":
+                st.write(f"Input check: `{s['category']}`")
+            elif s["kind"] == "model":
+                for t in s["thinking"]:
+                    st.write(f"💭 {t}")
+                for c in s["tool_calls"]:
+                    st.write(f"🔧 `{c['name']}` {c['input']}")
+            elif s["kind"] == "tool":
+                status = "❌" if s["is_error"] else "✅"
+                st.text(f"{status} {s['output'][:400]}")
+            elif s["kind"] == "output_guardrail":
+                st.write(f"Output check flags: {s['flags'] or 'none'}")

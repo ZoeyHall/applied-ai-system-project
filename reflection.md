@@ -138,3 +138,41 @@ I would also improve the Streamlit interface by making it easier for users to ed
 One of the most important things I learned from this project is that system design should happen before implementation, but the design can also evolve as you learn more about the problem. Creating the UML diagram helped me think about the responsibilities of each class before writing code, but implementation showed me where some responsibilities needed to be adjusted.
 
 I also learned that working with AI requires judgment. AI can help with brainstorming, debugging, and explaining programming concepts, but I cannot assume that every suggestion is correct. I need to understand the problem, test the suggested solution, and make sure it actually satisfies the project requirements.
+---
+
+# Project 4: Extending PawPal+ into an Applied AI System
+
+## 6. System design for the AI extension
+
+**What I added and why.** I extended PawPal+ with an AI assistant that uses Claude in a tool-use loop. The owner can describe tasks in plain language, ask care questions answered from a cited care guide, and ask for their day's plan. I kept the original `Scheduler` as the part that decides what fits in the day. The AI calls it through a tool instead of making up schedules itself, because the scheduler is deterministic and already covered by 47 tests.
+
+**Reliability.** Guardrails sit at three points: before the model (emergencies, prompt injection, empty input), between the model and the schedule (every `add_task` call is checked against the same rules as the form), and after the model (dose mentions and uncited advice). Emergencies never reach the AI, because a fixed "call your vet / poison control" message is safer than a generated one.
+
+## 7. How I used AI during development
+
+I used **Claude Code in VS Code** as a coding partner for the whole extension. I gave it the Project 4 rubric and my Module 2 code, and asked it to improve the project to meet the rubric. It proposed the design, wrote the new modules, tests and docs, and ran the tests and evaluation after each change. My part was steering: deciding what the project needed, testing it myself, and pushing back when results didn't work for me.
+
+The most useful prompts gave the AI something concrete to check against: the exact rubric text, or the exact error message I got (`401 Invalid bearer token`). Vague requests produced vague plans. A rubric line or an error message produced a specific fix.
+
+**A suggestion I accepted: index the care guide by section, not by file.**
+The AI suggested splitting each care document into its `##` sections and tagging each with the species it applies to. I accepted it because I could measure the effect. `eval/compare_retrieval.py` shows the section-level index is more accurate (9/9 vs 8/9; the whole-file index answered a cat brushing question with the dog guide) and sends Claude **77% less text** (52 vs 223 words per question). It also gives precise citations like `cat_care.md > Litter box care`.
+
+**I also accepted:** keeping my original `Scheduler` in charge of building the plan, and having the AI call it as a tool rather than write schedules itself. The scheduler already had 47 passing tests, and AI-written schedules would be harder to trust and test.
+
+**A suggestion I rejected or revised: placeholder output in the README.**
+After the first version, the AI's plan was for me to run the live demo with an API key and paste the output into README sections marked `TODO`. When I tried, my terminal's credentials failed with a 401 error, and I didn't have a working key. I didn't want to submit a README with placeholders, or with made-up output, so I asked for a different approach. The result was **offline mode**: without a key, the assistant still runs the guardrails, the care-guide search and the scheduler, and says clearly that it is offline. All sample output in the README is now real. Anyone grading the project can run it without paying for an API key, and the app keeps working if the AI service is down.
+
+**I also revised:**
+- The first error handling showed a raw traceback when the key was rejected. I had it changed to a plain message that says which setting to fix.
+- Testing the app myself showed that "How often should I feed my dog?" returned the toxic-foods section instead of the feeding schedule, because "feed" didn't match "Feeding". I had light stemming added to the retriever and the question added to the eval, so the bug can't come back unnoticed.
+- The first version of the retrieval comparison script reached into the retriever's private internals. It was rewritten so the retriever accepts a list of chunks directly, which is cleaner and reuses the same search code.
+
+## 8. Limitations and future improvements
+
+- **Keyword guardrails can be bypassed.** "My pup snacked on a Hershey bar" doesn't match the emergency patterns. Next step: add a small AI classifier as a second safety check, and grow the eval set with harder phrasings.
+- **Small, project-written knowledge base.** 18 sections across 5 documents, with no breeds, health conditions or species beyond dogs and cats. It is not veterinary advice.
+- **The agent can only add tasks.** It can't edit, complete or remove them yet. I'd add those tools along with a confirmation step before anything is deleted.
+- **No persistence.** Everything lives in the Streamlit session and is lost on reload.
+- **Live AI output varies,** so the live eval checks outcomes (task saved at 08:00, high priority) rather than exact wording.
+
+**What I learned.** AI was fastest at the parts with a clear target: writing code to a spec, writing tests, and turning a rubric into a checklist. I had to slow down at the boundaries between parts, such as API credentials, how the UI behaves after an error, and whether sample output was real. Running the code myself and reading the actual error messages caught problems that looked fine on paper. The biggest lesson is to keep the AI's job narrow and checkable: Claude interprets requests and answers questions, while plain Python code that I can test decides the schedule and enforces safety.
